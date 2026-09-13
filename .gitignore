@@ -1,0 +1,14 @@
+node_modules
+.tmp/
+.next
+.env*
+!.env.example
+*.log
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.pip-temp/
+*.egg-info/
+*.tsbuildinfo

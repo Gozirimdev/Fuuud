@@ -1,0 +1,1 @@
+"use client";export default function Error({reset}:{reset:()=>void}){return <div className="page"><div className="card p-10 text-center"><h1 className="font-black text-xl">We couldn’t load this information.</h1><p className="muted mt-2">Please try again.</p><button onClick={reset} className="btn btn-primary mt-5">Try again</button></div></div>}

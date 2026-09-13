@@ -1,0 +1,6 @@
+import {hospitals,prescriptions,conversations} from "@/data/mock";import {getDoctor,getDoctors} from "@/lib/api";import type {Doctor} from "@/types";import type {ApiDoctor,DoctorQuery} from "@/lib/api/types";
+function mapDoctor(x:ApiDoctor):Doctor{return{id:x.id,name:`Dr. ${x.first_name} ${x.last_name}`,initials:`${x.first_name[0]}${x.last_name[0]}`,specialty:x.specialty,title:x.professional_title,location:`${x.city}, ${x.state}`,experience:x.years_of_experience,rating:Number(x.rating),fee:Number(x.consultation_fee),next:"View available times",verified:x.verification_status==="verified",bio:x.bio}}
+export const doctorService={getAll:async(query:DoctorQuery={})=>(await getDoctors(query)).items.map(mapDoctor),getById:async(id:string)=>mapDoctor(await getDoctor(id)),search:async(q:string)=>(await getDoctors({search:q})).items.map(mapDoctor)};
+export const hospitalService={getAll:async()=>hospitals,getById:async(id:string)=>hospitals.find(x=>x.id===id)};
+export const prescriptionService={getAll:async()=>prescriptions,getById:async(id:string)=>prescriptions.find(x=>x.id===id)};
+export const messageService={getAll:async()=>conversations,getById:async(id:string)=>conversations.find(x=>x.id===id)};

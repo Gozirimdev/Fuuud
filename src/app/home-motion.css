@@ -1,0 +1,12 @@
+@keyframes section-enter{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes care-step-enter{from{opacity:0;transform:translate(16px,8px)}to{opacity:1;transform:translate(0,0)}}
+@keyframes care-step-highlight{0%,8%,38%,100%{box-shadow:0 0 0 0 #b8f56900;translate:0 0}15%,30%{box-shadow:0 0 0 3px #b8f569;translate:0 -3px}}
+@keyframes assistant-invite{0%,100%{transform:translateY(0)}35%{transform:translateY(-5px)}65%{transform:translateY(1px)}}
+.dashboard-header,.care-hero,.home-search,.assistant-entry,.services-section,.home-rail{animation:section-enter .65s cubic-bezier(.2,.8,.2,1) both}
+.home-search{animation-delay:.1s}.assistant-entry{animation-delay:.2s}.services-section{animation-delay:.3s}.home-rail{animation-delay:.25s}
+.path-step{animation:care-step-enter .7s ease-out both,care-step-highlight 6s ease-in-out 1s 2}
+.path-booking{animation-delay:.18s,3s}.path-followup{animation-delay:.36s,5s}
+.assistant-entry .assistant-icon,.chat-welcome-icon{animation:assistant-invite 1.5s ease-in-out .8s 2}
+.chat-message{animation:section-enter .35s ease-out both}
+.nav-ai .nav-icon{animation:assistant-invite 1.4s ease-in-out 1.2s 2}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

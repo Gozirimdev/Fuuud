@@ -1,0 +1,1 @@
+import Link from "next/link";import {EmptyState} from "@/components/ui";export default function NotFound(){return <div className="page"><EmptyState title="We couldn’t find this page" text="The requested demo record may not exist."/><Link className="btn btn-primary mt-4" href="/">Back home</Link></div>}
