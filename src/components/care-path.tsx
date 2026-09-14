@@ -1,12 +1,13 @@
-import {CalendarCheck2,MessageCircle,Stethoscope,ArrowDown} from "lucide-react";
+"use client";
+
+import Image from "next/image";
+import {useState} from "react";
+import {Pause,Play} from "lucide-react";
 
 export function CarePath() {
-  return <div className="care-path" aria-hidden="true">
-    <div className="path-heading">YOUR PATH TO CARE</div>
-    <div className="path-step path-doctor"><span className="path-icon"><Stethoscope size={24}/></span><div><strong>Find your doctor</strong><small>The right expertise</small></div><span className="path-number">01</span></div>
-    <span className="path-connector"><ArrowDown size={17}/></span>
-    <div className="path-step path-booking"><span className="path-icon"><CalendarCheck2 size={24}/></span><div><strong>Plan your visit</strong><small>A time that works for you</small></div><span className="path-number">02</span></div>
-    <span className="path-connector"><ArrowDown size={17}/></span>
-    <div className="path-step path-followup"><span className="path-icon"><MessageCircle size={24}/></span><div><strong>Stay connected</strong><small>Keep your care in one place</small></div><span className="path-number">03</span></div>
-  </div>;
+  const [paused,setPaused]=useState(false);
+  return <figure className="care-editorial" data-paused={paused}>
+    <div className="care-photo-wrap"><Image className="care-photo" src="/images/care-consultation.webp" alt="Illustrative scene of a doctor listening attentively to a patient in a sunlit clinic." fill sizes="(max-width: 600px) 100vw, (max-width: 1000px) 50vw, 45vw" preload/></div>
+    <figcaption className="care-photo-caption"><p>Good care starts<br/>with being heard.</p><button type="button" className="care-motion-toggle" onClick={()=>setPaused(!paused)} aria-label={paused?"Play photo animation":"Pause photo animation"}>{paused?<Play size={14}/>:<Pause size={14}/>}</button></figcaption>
+  </figure>;
 }

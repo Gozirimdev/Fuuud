@@ -17,7 +17,7 @@ const mobilePatientNav = [
   {h:"/doctors",l:"Doctors",i:Stethoscope},
   {h:"/agent",l:"Fuuud AI",i:BotMessageSquare},
   {h:"/messages",l:"Messages",i:MessageCircle},
-  {h:"/profile",l:"Account",i:UserRound},
+  {h:"/hospitals",l:"Hospitals",i:Hospital},
 ];
 const careNav = [
   {h:"/appointments",l:"Appointments",i:CalendarDays},
