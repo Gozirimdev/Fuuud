@@ -2,7 +2,7 @@
 
 ## Deployment
 
-Apply `alembic upgrade head` from `apps/api` before deploying this revision. Migration `0008_account_emails` adds the durable delivery queue. Keep API and email-worker code and configuration on the same revision.
+Run `python -m app.init_db` from `apps/api` before starting this revision. It creates MongoDB collections and indexes. See [MongoDB deployment](mongodb-deployment.md). Keep API and email-worker code and configuration on the same revision.
 
 Set these server-side values using the hosting platform's secrets/configuration controls:
 
@@ -11,7 +11,7 @@ Set these server-side values using the hosting platform's secrets/configuration 
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`: the provider's host, port, and either `starttls` (default, commonly port 587) or `ssl` (commonly port 465). TLS certificate verification is enabled.
 - `SMTP_USERNAME`, `SMTP_PASSWORD`: set both when authentication is required.
 - `MAIL_FROM`: the sender email address verified with the email provider.
-- `DATABASE_URL`: the same PostgreSQL database used by the API.
+- `MONGODB_URI` and `MONGODB_DATABASE`: the same MongoDB database used by the API.
 - `ENVIRONMENT=production`: raw verification/reset tokens are excluded from API responses.
 
 Schedule this bounded command every minute, from `apps/api`:
@@ -20,9 +20,9 @@ Schedule this bounded command every minute, from `apps/api`:
 python -m app.mail_worker --limit 50
 ```
 
-The command exits after processing its batch; it is not a continuously running service. A scheduler must invoke it repeatedly. PostgreSQL row locks with `SKIP LOCKED` prevent concurrent workers from processing the same queued row simultaneously. This concurrency behavior still needs verification against hosted PostgreSQL.
+The command exits after processing its batch; it is not a continuously running service. A scheduler must invoke it repeatedly. Atomic MongoDB claims lease each job to one worker for five minutes. Expired leases can be reclaimed after a crash; completion updates require the matching lease owner.
 
-Registration and recovery requests write token hashes and delivery jobs in the same transaction. The queue contains no raw bearer token or message body: the worker derives the token using HMAC-SHA256, the secret, message kind, and random token UUID. Treat `JWT_SECRET` as sensitive; rotating it makes queued links obsolete, requiring new requests.
+Registration and recovery requests write token hashes and delivery jobs in the same transaction. The queue contains no raw bearer token or message body: the worker derives the token using HMAC-SHA256, the secret, message kind, and random token ObjectId. Treat `JWT_SECRET` as sensitive; rotating it makes queued links obsolete, requiring new requests.
 
 Delivery retries after 1, 2, 4, and 8 minutes, then marks the job failed after the fifth unsuccessful attempt. Used, expired, and secret-mismatched tokens are marked obsolete. SMTP errors are logged without provider exception text, recipients, tokens, or credentials. Delivery is at least once: a process crash after SMTP acceptance but before database commit can cause a duplicate email containing the same single-use link. SMTP acceptance is not proof of inbox delivery.
 
@@ -46,7 +46,7 @@ Pending accounts can sign in and view their account/onboarding state. API action
 
 ## Required staging acceptance
 
-- Apply the full migration chain to PostgreSQL and run API and worker against it.
+- Initialize the MongoDB collections and indexes and run API and worker against the same Atlas cluster.
 - Verify registration email delivery, confirmation, recovery, password reset, and old-session invalidation using controlled test accounts.
 - Verify SMTP failure recovery, scheduler monitoring, and concurrent worker behavior.
 - Provision a dedicated administrator and confirm role access.

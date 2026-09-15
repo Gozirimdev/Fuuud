@@ -1,15 +1,14 @@
 import hashlib
-import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import HTTPException, status
-from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from bson import ObjectId
+from fastapi import HTTPException
+from pymongo.errors import DuplicateKeyError
 
 from app.account_mail import email_token
 from app.core.security import create_token, hash_password, verify_password
+from app.db import Store
 from app.models import (
     AccountEmail,
     AccountStatus,
@@ -17,162 +16,140 @@ from app.models import (
     AppointmentStatus,
     AuditEvent,
     Availability,
-    AvailabilityStatus,
     EmailVerificationToken,
     PasswordResetToken,
     Practitioner,
     User,
     UserRole,
 )
-from app.repositories import AppointmentRepository, DoctorRepository, UserRepository
+from app.repositories import DoctorRepository, UserRepository
 from app.schemas import BookAppointmentIn, LoginIn, RegisterIn
 
 
 class AuthService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Store):
         self.db = db
         self.repo = UserRepository(db)
 
-    def _audit(self, user_id: uuid.UUID, event_type: str) -> None:
-        self.db.add(AuditEvent(user_id=user_id, event_type=event_type))
+    def _audit(self, user_id: str, event_type: str) -> None:
+        self.db.insert(AuditEvent(user_id=user_id, event_type=event_type))
 
     def register(self, data: RegisterIn) -> tuple[User, str]:
-        if self.repo.by_email(data.email):
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "An account with this email already exists"
-            )
+        user = User(
+            **data.model_dump(exclude={"password", "email"}),
+            email=data.email,
+            password_hash=hash_password(data.password),
+            account_status=(
+                AccountStatus.active if data.role == UserRole.patient else AccountStatus.pending
+            ),
+        )
+
+        def operation(db):
+            service = AuthService(db)
+            service.repo.add(user)
+            service._audit(user.id, "account.registered")
+            return user, service._queue_account_email(user.email, "email_verification") or ""
+
         try:
-            user = User(
-                **data.model_dump(exclude={"password", "email"}),
-                email=data.email.lower(),
-                password_hash=hash_password(data.password),
-                account_status=(
-                    AccountStatus.active if data.role == UserRole.patient else AccountStatus.pending
-                ),
-            )
-            self.repo.add(user)
-            self._audit(user.id, "account.registered")
-            return user, self.request_email_verification(user.email) or ""
-        except IntegrityError:
-            self.db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "An account with this email already exists"
-            ) from None
+            return self.db.transaction(operation)
+        except DuplicateKeyError:
+            raise HTTPException(409, "An account with this email already exists") from None
 
     def login(self, data: LoginIn) -> tuple[str, int]:
         user = self.repo.by_email(data.email)
         if not user or not verify_password(data.password, user.password_hash):
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+            raise HTTPException(401, "Invalid email or password")
         if user.account_status == AccountStatus.suspended:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "This account has been suspended")
+            raise HTTPException(403, "This account has been suspended")
         self._audit(user.id, "account.login")
-        self.db.commit()
         return create_token(user.id, user.session_version)
 
     def request_password_reset(self, email: str) -> str | None:
-        return self._queue_account_email(email, "password_reset")
+        return self.db.transaction(
+            lambda db: AuthService(db)._queue_account_email(email, "password_reset")
+        )
 
     def request_email_verification(self, email: str) -> str | None:
-        return self._queue_account_email(email, "email_verification")
+        return self.db.transaction(
+            lambda db: AuthService(db)._queue_account_email(email, "email_verification")
+        )
 
     def _queue_account_email(self, email: str, kind: str) -> str | None:
-        # Serialize requests for the same account across API workers.
-        user = self.db.scalar(select(User).where(User.email == email.lower()).with_for_update())
-        if not user or (kind == "email_verification" and user.email_verified_at is not None):
+        # A write on the user serializes concurrent requests in retried transactions.
+        user = self.db.claim(
+            User, {"email": email.strip().lower()}, {"$inc": {"email_request_version": 1}}
+        )
+        if not user or (kind == "email_verification" and user.email_verified):
             return None
         now = datetime.now(UTC)
         model = PasswordResetToken if kind == "password_reset" else EmailVerificationToken
-        recent = self.db.scalar(select(model.id).where(
-            model.user_id == user.id, model.created_at > now - timedelta(seconds=60)
-        ).limit(1))
-        if recent:
+        if self.db.count(
+            model, {"user_id": user.id, "created_at": {"$gt": now - timedelta(seconds=60)}}
+        ):
             return None
-        hourly_count = self.db.scalar(select(func.count()).select_from(model).where(
-            model.user_id == user.id, model.created_at > now - timedelta(hours=1)
-        )) or 0
-        if hourly_count >= 5:
+        if (
+            self.db.count(
+                model, {"user_id": user.id, "created_at": {"$gt": now - timedelta(hours=1)}}
+            )
+            >= 5
+        ):
             return None
-        self.db.execute(
-            update(model)
-            .where(model.user_id == user.id, model.used_at.is_(None))
-            .values(used_at=now)
+        self.db.update(
+            model, {"user_id": user.id, "used_at": None}, {"$set": {"used_at": now}}, many=True
         )
-        token_id = uuid.uuid4()
+        token_id = str(ObjectId())
         token = email_token(kind, token_id)
-        self.db.add(
+        self.db.insert(
             model(
                 id=token_id,
                 user_id=user.id,
                 token_hash=hashlib.sha256(token.encode()).hexdigest(),
-                expires_at=now + (
-                    timedelta(minutes=30) if kind == "password_reset" else timedelta(hours=24)
-                ),
+                expires_at=now
+                + (timedelta(minutes=30) if kind == "password_reset" else timedelta(hours=24)),
             )
         )
-        self.db.add(AccountEmail(id=token_id, user_id=user.id, kind=kind))
-        event = (
+        self.db.insert(AccountEmail(id=token_id, user_id=user.id, kind=kind))
+        self._audit(
+            user.id,
             "password.reset_requested"
-            if kind == "password_reset" else "email.verification_requested"
+            if kind == "password_reset"
+            else "email.verification_requested",
         )
-        self._audit(user.id, event)
-        self.db.commit()
         return token
 
-    def verify_email(self, token: str) -> None:
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        item = self.db.scalar(
-            select(EmailVerificationToken)
-            .where(EmailVerificationToken.token_hash == token_hash)
-            .with_for_update()
-        )
+    def _consume(self, token: str, model, password_hash: str | None = None):
         now = datetime.now(UTC)
-        if not item or item.used_at is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "This verification link is invalid or has already been used",
-            )
-        expires_at = (
-            item.expires_at if item.expires_at.tzinfo else item.expires_at.replace(tzinfo=UTC)
+        item = self.db.claim(
+            model,
+            {
+                "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                "used_at": None,
+                "expires_at": {"$gt": now},
+            },
+            {"$set": {"used_at": now}},
         )
-        if expires_at <= now:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This verification link has expired")
-        user = self.db.get(User, item.user_id)
-        if not user:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This verification link is invalid")
-        user.email_verified_at = now
-        item.used_at = now
-        self._audit(user.id, "email.verified")
-        self.db.commit()
+        if not item:
+            raise HTTPException(400, "This link is invalid, expired, or has already been used")
+        changes = {"$set": {"updated_at": now, "email_verified_at": now}}
+        if password_hash:
+            changes = {
+                "$set": {"updated_at": now, "password_hash": password_hash},
+                "$inc": {"session_version": 1},
+            }
+        if not self.db.update(User, {"id": item.user_id}, changes).matched_count:
+            raise HTTPException(400, "This link is invalid")
+        self._audit(item.user_id, "password.reset_completed" if password_hash else "email.verified")
+
+    def verify_email(self, token: str) -> None:
+        self.db.transaction(lambda db: AuthService(db)._consume(token, EmailVerificationToken))
 
     def reset_password(self, token: str, password: str) -> None:
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        item = self.db.scalar(
-            select(PasswordResetToken)
-            .where(PasswordResetToken.token_hash == token_hash)
-            .with_for_update()
-        )
-        now = datetime.now(UTC)
-        if not item or item.used_at is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "This reset link is invalid or has already been used"
-            )
-        expires_at = (
-            item.expires_at if item.expires_at.tzinfo else item.expires_at.replace(tzinfo=UTC)
-        )
-        if expires_at <= now:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This reset link has expired")
-        user = self.db.get(User, item.user_id)
-        if not user:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "This reset link is invalid")
-        user.password_hash = hash_password(password)
-        user.session_version += 1
-        item.used_at = now
-        self._audit(user.id, "password.reset_completed")
-        self.db.commit()
+        hashed = hash_password(password)
+        self.db.transaction(lambda db: AuthService(db)._consume(token, PasswordResetToken, hashed))
 
 
 class DoctorService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Store):
         self.db = db
         self.repo = DoctorRepository(db)
 
@@ -191,122 +168,128 @@ class DoctorService:
         page_size: int,
         sort: str,
     ):
-        q = self.repo.query(
+        query = self.repo.query(
             search, specialty, city, state, country, max_fee, available_date, verified_only
         )
-        total = self.db.scalar(select(func.count()).select_from(q.subquery())) or 0
-        ordering = (
-            Practitioner.consultation_fee.asc()
+        order = (
+            [("consultation_fee", 1)]
             if sort == "fee_asc"
-            else Practitioner.rating.desc()
-            if sort == "rating"
-            else Practitioner.created_at.desc()
+            else ([("rating", -1)] if sort == "rating" else [("created_at", -1)])
         )
-        return list(
-            self.db.scalars(
-                q.order_by(ordering).offset((page - 1) * page_size).limit(page_size)
-            ).all()
-        ), total
+        return (
+            self.db.find(
+                Practitioner,
+                query,
+                sort=order + [("_id", 1)],
+                skip=(page - 1) * page_size,
+                limit=page_size,
+            ),
+            self.db.count(Practitioner, query),
+        )
 
-    def get(self, doctor_id: uuid.UUID) -> Practitioner:
+    def get(self, doctor_id: str) -> Practitioner:
         doctor = self.repo.get(doctor_id)
         if not doctor:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
+            raise HTTPException(404, "Doctor not found")
         return doctor
 
-    def availability(self, doctor_id: uuid.UUID, start: date | None, end: date | None):
+    def availability(self, doctor_id: str, start: date | None, end: date | None):
         self.get(doctor_id)
-        q = select(Availability).where(
-            Availability.practitioner_id == doctor_id,
-            Availability.status == AvailabilityStatus.available,
-        )
-        if start:
-            q = q.where(Availability.date >= start)
-        if end:
-            q = q.where(Availability.date <= end)
-        return list(self.db.scalars(q.order_by(Availability.date, Availability.start_time)).all())
+        query = {"practitioner_id": doctor_id, "status": "available"}
+        if start or end:
+            query["date"] = {}
+            if start:
+                query["date"]["$gte"] = start
+            if end:
+                query["date"]["$lte"] = end
+        return self.db.find(Availability, query, sort=[("date", 1), ("start_time", 1)])
 
 
 class AppointmentService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Store):
         self.db = db
-        self.repo = AppointmentRepository(db)
+
+    def _hydrate(self, item: Appointment) -> Appointment:
+        item.practitioner = self.db.get(Practitioner, item.practitioner_id)
+        return item
 
     def book(self, user: User, data: BookAppointmentIn) -> Appointment:
-        try:
-            slot = self.repo.lock_slot(data.availability_id)
+        def operation(db):
+            slot = db.get(Availability, data.availability_id)
             if not slot or slot.practitioner_id != data.practitioner_id:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, "Selected slot does not belong to this doctor"
-                )
-            if slot.status != AvailabilityStatus.available:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "This appointment time is no longer available"
-                )
-            if datetime.combine(slot.date, slot.start_time, tzinfo=UTC) <= datetime.now(UTC):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT, "This appointment time is no longer available"
-                )
-            if not self.db.get(Practitioner, data.practitioner_id):
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found")
-            slot.status = AvailabilityStatus.booked
+                raise HTTPException(400, "Selected slot does not belong to this doctor")
             scheduled = datetime.combine(slot.date, slot.start_time, tzinfo=UTC)
-            item = Appointment(
-                user_id=user.id,
-                practitioner_id=data.practitioner_id,
-                availability_id=slot.id,
-                appointment_type=data.appointment_type,
-                status=AppointmentStatus.confirmed,
-                scheduled_at=scheduled,
-                reason=data.reason,
+            if slot.status != "available" or scheduled <= datetime.now(UTC):
+                raise HTTPException(409, "This appointment time is no longer available")
+            doctor = db.get(Practitioner, data.practitioner_id)
+            if not doctor:
+                raise HTTPException(404, "Doctor not found")
+            claimed = db.update(
+                Availability,
+                {"id": slot.id, "status": "available"},
+                {"$set": {"status": "booked", "updated_at": datetime.now(UTC)}},
             )
-            self.db.add(item)
-            self.db.commit()
-            self.db.refresh(item)
+            if not claimed.modified_count:
+                raise HTTPException(409, "This appointment time is no longer available")
+            item = db.insert(
+                Appointment(
+                    user_id=user.id,
+                    practitioner_id=data.practitioner_id,
+                    availability_id=slot.id,
+                    appointment_type=data.appointment_type,
+                    scheduled_at=scheduled,
+                    reason=data.reason,
+                )
+            )
+            item.practitioner = doctor
             return item
-        except IntegrityError:
-            self.db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "This appointment time is no longer available"
-            ) from None
-        except HTTPException:
-            self.db.rollback()
-            raise
+
+        try:
+            return self.db.transaction(operation)
+        except DuplicateKeyError:
+            raise HTTPException(409, "This appointment time is no longer available") from None
 
     def mine(self, user: User, view: str | None):
-        q = self.repo.for_user(user.id)
+        query = {"user_id": user.id}
         now = datetime.now(UTC)
         if view == "upcoming":
-            q = q.where(
-                Appointment.scheduled_at >= now, Appointment.status != AppointmentStatus.cancelled
-            )
+            query.update(scheduled_at={"$gte": now}, status={"$ne": "cancelled"})
         elif view == "past":
-            q = q.where(Appointment.scheduled_at < now)
+            query["scheduled_at"] = {"$lt": now}
         elif view == "cancelled":
-            q = q.where(Appointment.status == AppointmentStatus.cancelled)
-        return list(self.db.scalars(q.order_by(Appointment.scheduled_at.desc())).all())
+            query["status"] = "cancelled"
+        return [
+            self._hydrate(item)
+            for item in self.db.find(Appointment, query, sort=[("scheduled_at", -1)])
+        ]
 
-    def own(self, user: User, item_id: uuid.UUID) -> Appointment:
-        item = self.repo.get(item_id)
-        if not item or item.user_id != user.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
-        return item
+    def own(self, user: User, item_id: str) -> Appointment:
+        item = self.db.find_one(Appointment, {"id": item_id, "user_id": user.id})
+        if not item:
+            raise HTTPException(404, "Appointment not found")
+        return self._hydrate(item)
 
-    def cancel(self, user: User, item_id: uuid.UUID) -> Appointment:
-        item = self.repo.lock(item_id)
-        if not item or item.user_id != user.id:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
-        if item.status in {AppointmentStatus.cancelled, AppointmentStatus.completed}:
-            raise HTTPException(status.HTTP_409_CONFLICT, "This appointment cannot be cancelled")
-        scheduled = (
-            item.scheduled_at if item.scheduled_at.tzinfo else item.scheduled_at.replace(tzinfo=UTC)
-        )
-        if scheduled <= datetime.now(UTC):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Past appointments cannot be cancelled")
-        slot = self.repo.lock_slot(item.availability_id)
-        item.status = AppointmentStatus.cancelled
-        if slot:
-            slot.status = AvailabilityStatus.available
-        self.db.commit()
-        self.db.refresh(item)
-        return item
+    def cancel(self, user: User, item_id: str) -> Appointment:
+        def operation(db):
+            item = db.find_one(Appointment, {"id": item_id, "user_id": user.id})
+            if not item:
+                raise HTTPException(404, "Appointment not found")
+            if item.status in {AppointmentStatus.cancelled, AppointmentStatus.completed}:
+                raise HTTPException(409, "This appointment cannot be cancelled")
+            if item.scheduled_at <= datetime.now(UTC):
+                raise HTTPException(409, "Past appointments cannot be cancelled")
+            item = db.claim(
+                Appointment,
+                {"id": item.id, "status": item.status},
+                {"$set": {"status": "cancelled", "updated_at": datetime.now(UTC)}},
+            )
+            if not item:
+                raise HTTPException(409, "This appointment cannot be cancelled")
+            db.update(
+                Availability,
+                {"id": item.availability_id, "status": "booked"},
+                {"$set": {"status": "available", "updated_at": datetime.now(UTC)}},
+            )
+            return AppointmentService(db)._hydrate(item)
+
+        return self.db.transaction(operation)

@@ -1,7 +1,7 @@
-import uuid
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from bson import ObjectId
 from pwdlib import PasswordHash
 
 from app.core.config import get_settings
@@ -17,7 +17,7 @@ def verify_password(value: str, hashed: str) -> bool:
     return password_hash.verify(value, hashed)
 
 
-def create_token(user_id: uuid.UUID, session_version: int) -> tuple[str, int]:
+def create_token(user_id: str, session_version: int) -> tuple[str, int]:
     s = get_settings()
     expires = timedelta(minutes=s.access_token_expire_minutes)
     payload = {
@@ -31,13 +31,17 @@ def create_token(user_id: uuid.UUID, session_version: int) -> tuple[str, int]:
     )
 
 
-def decode_token(token: str) -> tuple[uuid.UUID, int]:
+def decode_token(token: str) -> tuple[str, int]:
     s = get_settings()
     payload = jwt.decode(
-        token, s.jwt_secret, algorithms=[s.jwt_algorithm],
+        token,
+        s.jwt_secret,
+        algorithms=[s.jwt_algorithm],
         options={"require": ["sub", "exp", "iat", "session_version"]},
     )
     version = payload["session_version"]
     if type(version) is not int or version < 0:
         raise jwt.InvalidTokenError("Invalid session version")
-    return uuid.UUID(payload["sub"]), version
+    if not ObjectId.is_valid(payload["sub"]):
+        raise jwt.InvalidTokenError("Invalid user id")
+    return str(payload["sub"]), version

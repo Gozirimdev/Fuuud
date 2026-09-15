@@ -1,3 +1,5 @@
+> Database update: the backend now uses MongoDB. SQL/Alembic details below are historical. Use [MongoDB deployment](mongodb-deployment.md) for current setup and commands.
+
 # FUUUD launch checklist
 
 This checklist turns the product roadmap into a delivery sequence. Existing code is a starting point, not evidence that a feature has passed production verification. Unchecked tasks require implementation, verification, or both.

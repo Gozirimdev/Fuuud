@@ -1,3 +1,5 @@
+> Database update: the backend now uses MongoDB. SQL/Alembic details below are historical. Use [MongoDB deployment](mongodb-deployment.md) for current setup and commands.
+
 # FUUUD product roadmap
 
 FUUUD is a healthcare access and navigation platform for patients, doctors, hospitals, and platform administrators. The FU Agent is one supporting feature; it is not the identity of the product.

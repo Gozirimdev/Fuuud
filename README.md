@@ -23,11 +23,13 @@ See `docs/ui-system.md` for design guidance and `docs/architecture.md` for Phase
 
 See `docs/product-roadmap.md` for the component-by-component path to a production-ready platform.
 
-## Phase 1 local development
+## MongoDB backend setup
 
-Start PostgreSQL with `docker compose up -d db`. Copy `apps/api/.env.example` to `apps/api/.env`, replace `JWT_SECRET`, then from `apps/api` create a Python 3.12 virtual environment and install `pip install -e ".[dev]"`. Run `alembic upgrade head`, `python -m app.seed`, and `uvicorn app.main:app --reload`. Copy the root `.env.example` to `.env.local`, then run `npm install` and `npm run dev` from the repository root.
+The Python API uses MongoDB with PyMongo and validated document models. Use MongoDB Atlas for deployment or the local replica set in `docker-compose.yml`.
 
-Backend checks from `apps/api`: `ruff check .` and `pytest`. Frontend checks: `npm run lint`, `npm run typecheck`, and `npm run build`.
+See [MongoDB deployment and local setup](docs/mongodb-deployment.md) for the exact Render commands, environment variables, database conventions, and test instructions. The old PostgreSQL/Alembic commands no longer apply.
+
+Frontend checks: `npm run lint`, `npm run typecheck`, and `npm run build`. Backend checks from `apps/api`: `ruff check .` and `pytest` against a MongoDB replica set.
 
 Account verification and recovery now queue email delivery. Configure SMTP and schedule `python -m app.mail_worker --limit 50` to send queued messages. See `docs/account-operations.md` for deployment, retries, and administrator provisioning. Development responses still include local verification/reset tokens; production responses do not.
 

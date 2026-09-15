@@ -1,4 +1,3 @@
-import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
@@ -10,6 +9,7 @@ from app.models import (
     AppointmentStatus,
     AppointmentType,
     AvailabilityStatus,
+    DocumentId,
     UserRole,
     VerificationStatus,
 )
@@ -65,14 +65,14 @@ class VerifyEmailIn(BaseModel):
 
 class AuditEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
+    id: DocumentId
     event_type: str
     created_at: datetime
 
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
+    id: DocumentId
     first_name: str
     last_name: str
     email: EmailStr
@@ -97,8 +97,8 @@ class TokenOut(BaseModel):
 
 class AvailabilityOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
-    practitioner_id: uuid.UUID
+    id: DocumentId
+    practitioner_id: DocumentId
     date: date
     start_time: time
     end_time: time
@@ -107,7 +107,7 @@ class AvailabilityOut(BaseModel):
 
 class DoctorOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
+    id: DocumentId
     first_name: str
     last_name: str
     specialty: str
@@ -131,18 +131,18 @@ class DoctorList(BaseModel):
 
 
 class BookAppointmentIn(BaseModel):
-    practitioner_id: uuid.UUID
-    availability_id: uuid.UUID
+    practitioner_id: DocumentId
+    availability_id: DocumentId
     appointment_type: AppointmentType
     reason: str = Field(min_length=3, max_length=2000)
 
 
 class AppointmentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: uuid.UUID
-    user_id: uuid.UUID
-    practitioner_id: uuid.UUID
-    availability_id: uuid.UUID
+    id: DocumentId
+    user_id: DocumentId
+    practitioner_id: DocumentId
+    availability_id: DocumentId
     appointment_type: AppointmentType
     status: AppointmentStatus
     scheduled_at: datetime

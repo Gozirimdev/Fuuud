@@ -1,9 +1,8 @@
 from datetime import date, time, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
-
-from app.db import SessionLocal
+from app.db import get_store
+from app.init_db import initialize
 from app.models import Availability, Practitioner, VerificationStatus
 
 PEOPLE = [
@@ -35,8 +34,9 @@ PEOPLE = [
 
 
 def run():
-    with SessionLocal() as db:
-        if db.scalar(select(Practitioner.id).limit(1)):
+    with get_store() as db:
+        initialize(db.database)
+        if db.find_one(Practitioner):
             return
         for n, (first, last, specialty, title, city, state, fee, years) in enumerate(PEOPLE, 1):
             p = Practitioner(
@@ -55,11 +55,10 @@ def run():
                 rating=Decimal("4.8"),
                 profile_image_url=None,
             )
-            db.add(p)
-            db.flush()
+            db.insert(p)
             for day in range(1, 8):
                 for hour in (9, 11, 14):
-                    db.add(
+                    db.insert(
                         Availability(
                             practitioner_id=p.id,
                             date=date.today() + timedelta(days=day),
@@ -67,7 +66,6 @@ def run():
                             end_time=time(hour + 1),
                         )
                     )
-        db.commit()
 
 
 if __name__ == "__main__":

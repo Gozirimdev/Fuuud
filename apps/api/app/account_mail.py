@@ -4,14 +4,13 @@ import hashlib
 import hmac
 import smtplib
 import ssl
-import uuid
 from email.message import EmailMessage
 from urllib.parse import urlencode
 
 from app.core.config import Settings, get_settings
 
 
-def email_token(kind: str, token_id: uuid.UUID) -> str:
+def email_token(kind: str, token_id: str) -> str:
     if len(get_settings().jwt_secret) < 32:
         raise RuntimeError("JWT_SECRET must be at least 32 characters for account email tokens.")
     return hmac.new(

@@ -1,26 +1,14 @@
+"""Validated MongoDB documents; native ObjectIds are mapped to string API ids."""
+
 import enum
-import uuid
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from typing import Annotated, ClassVar, Self
 
-from sqlalchemy import (
-    CheckConstraint,
-    Date,
-    DateTime,
-    Enum,
-    ForeignKey,
-    Index,
-    Numeric,
-    String,
-    Text,
-    Time,
-    UniqueConstraint,
-    Uuid,
-    func,
-)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from bson import ObjectId
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.db import Base
+DocumentId = Annotated[str, Field(pattern=r"^[0-9a-f]{24}$")]
 
 
 def now() -> datetime:
@@ -64,161 +52,110 @@ class AppointmentStatus(enum.StrEnum):
     cancelled = "cancelled"
 
 
-class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+class Document(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    collection: ClassVar[str]
+    id: DocumentId = Field(default_factory=lambda: str(ObjectId()))
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
 
 
-class User(TimestampMixin, Base):
-    __tablename__ = "users"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    first_name: Mapped[str] = mapped_column(String(80))
-    last_name: Mapped[str] = mapped_column(String(80))
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
-    phone_number: Mapped[str | None] = mapped_column(String(32))
-    password_hash: Mapped[str] = mapped_column(String(255))
-    session_version: Mapped[int] = mapped_column(default=0)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), index=True, default=UserRole.patient)
-    account_status: Mapped[AccountStatus] = mapped_column(
-        Enum(AccountStatus), index=True, default=AccountStatus.active
-    )
-    country: Mapped[str | None] = mapped_column(String(80))
-    state: Mapped[str | None] = mapped_column(String(80))
-    city: Mapped[str | None] = mapped_column(String(80))
-    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    appointments: Mapped[list["Appointment"]] = relationship(back_populates="user")
-    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-    email_verification_tokens: Mapped[list["EmailVerificationToken"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
-    audit_events: Mapped[list["AuditEvent"]] = relationship(back_populates="user")
-    __table_args__ = (Index("uq_users_email_lower", func.lower(email), unique=True),)
+class User(Document):
+    collection = "users"
+    first_name: str = Field(min_length=2, max_length=80)
+    last_name: str = Field(min_length=2, max_length=80)
+    email: str
+    password_hash: str
+    phone_number: str | None = None
+    session_version: int = Field(default=0, ge=0)
+    role: UserRole = UserRole.patient
+    account_status: AccountStatus = AccountStatus.active
+    country: str | None = None
+    state: str | None = None
+    city: str | None = None
+    email_verified_at: datetime | None = None
+    email_request_version: int = 0
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
 
     @property
     def email_verified(self) -> bool:
         return self.email_verified_at is not None
 
 
-class AccountEmail(Base):
-    __tablename__ = "account_emails"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    kind: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(16), default="pending")
-    attempts: Mapped[int] = mapped_column(default=0)
-    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    __table_args__ = (Index("ix_account_emails_due", "status", "next_attempt_at"),)
+class AccountEmail(Document):
+    collection = "account_emails"
+    user_id: DocumentId
+    kind: str
+    status: str = "pending"
+    attempts: int = 0
+    next_attempt_at: datetime = Field(default_factory=now)
+    lease_until: datetime | None = None
+    lease_owner: str | None = None
 
 
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    user: Mapped[User] = relationship(back_populates="password_reset_tokens")
+class PasswordResetToken(Document):
+    collection = "password_reset_tokens"
+    user_id: DocumentId
+    token_hash: str
+    expires_at: datetime
+    used_at: datetime | None = None
 
 
-class EmailVerificationToken(Base):
-    __tablename__ = "email_verification_tokens"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
-    )
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    user: Mapped[User] = relationship(back_populates="email_verification_tokens")
+class EmailVerificationToken(PasswordResetToken):
+    collection = "email_verification_tokens"
 
 
-class AuditEvent(Base):
-    __tablename__ = "audit_events"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), index=True
-    )
-    event_type: Mapped[str] = mapped_column(String(80), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
-    user: Mapped[User] = relationship(back_populates="audit_events")
+class AuditEvent(Document):
+    collection = "audit_events"
+    user_id: DocumentId
+    event_type: str
 
 
-class Practitioner(TimestampMixin, Base):
-    __tablename__ = "healthcare_practitioners"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    first_name: Mapped[str] = mapped_column(String(80))
-    last_name: Mapped[str] = mapped_column(String(80))
-    specialty: Mapped[str] = mapped_column(String(120), index=True)
-    professional_title: Mapped[str] = mapped_column(String(160))
-    license_number: Mapped[str] = mapped_column(String(100), unique=True)
-    country: Mapped[str] = mapped_column(String(80), index=True)
-    state: Mapped[str] = mapped_column(String(80), index=True)
-    city: Mapped[str] = mapped_column(String(80), index=True)
-    consultation_fee: Mapped[Decimal] = mapped_column(Numeric(12, 2))
-    years_of_experience: Mapped[int]
-    verification_status: Mapped[VerificationStatus] = mapped_column(
-        Enum(VerificationStatus), index=True, default=VerificationStatus.pending
-    )
-    bio: Mapped[str] = mapped_column(Text)
-    rating: Mapped[Decimal] = mapped_column(Numeric(2, 1))
-    profile_image_url: Mapped[str | None] = mapped_column(String(500))
-    availability: Mapped[list["Availability"]] = relationship(
-        back_populates="practitioner", cascade="all, delete-orphan"
-    )
-    appointments: Mapped[list["Appointment"]] = relationship(back_populates="practitioner")
-    __table_args__ = (Index("ix_practitioner_name", "first_name", "last_name"),)
+class Practitioner(Document):
+    collection = "healthcare_practitioners"
+    first_name: str
+    last_name: str
+    specialty: str
+    professional_title: str
+    license_number: str
+    country: str
+    state: str
+    city: str
+    consultation_fee: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    years_of_experience: int = Field(ge=0)
+    verification_status: VerificationStatus = VerificationStatus.pending
+    bio: str
+    rating: Decimal = Field(ge=0, le=5)
+    profile_image_url: str | None = None
 
 
-class Availability(TimestampMixin, Base):
-    __tablename__ = "practitioner_availability"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    practitioner_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("healthcare_practitioners.id", ondelete="CASCADE"), index=True
-    )
-    date: Mapped[date] = mapped_column(Date, index=True)
-    start_time: Mapped[time] = mapped_column(Time)
-    end_time: Mapped[time] = mapped_column(Time)
-    status: Mapped[AvailabilityStatus] = mapped_column(
-        Enum(AvailabilityStatus), index=True, default=AvailabilityStatus.available
-    )
-    practitioner: Mapped[Practitioner] = relationship(back_populates="availability")
-    appointment: Mapped["Appointment|None"] = relationship(
-        back_populates="availability", uselist=False
-    )
-    __table_args__ = (
-        UniqueConstraint("practitioner_id", "date", "start_time", name="uq_practitioner_slot"),
-        CheckConstraint("end_time > start_time", name="ck_availability_end_after_start"),
-    )
+class Availability(Document):
+    collection = "practitioner_availability"
+    practitioner_id: DocumentId
+    date: date
+    start_time: time
+    end_time: time
+    status: AvailabilityStatus = AvailabilityStatus.available
+
+    @model_validator(mode="after")
+    def valid_times(self) -> Self:
+        if self.end_time <= self.start_time:
+            raise ValueError("End time must be after start time")
+        return self
 
 
-class Appointment(TimestampMixin, Base):
-    __tablename__ = "appointments"
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="RESTRICT"), index=True
-    )
-    practitioner_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("healthcare_practitioners.id", ondelete="RESTRICT"), index=True
-    )
-    availability_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("practitioner_availability.id", ondelete="RESTRICT"), unique=True
-    )
-    appointment_type: Mapped[AppointmentType] = mapped_column(Enum(AppointmentType))
-    status: Mapped[AppointmentStatus] = mapped_column(
-        Enum(AppointmentStatus), index=True, default=AppointmentStatus.confirmed
-    )
-    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    reason: Mapped[str] = mapped_column(Text)
-    notes: Mapped[str | None] = mapped_column(Text)
-    user: Mapped[User] = relationship(back_populates="appointments")
-    practitioner: Mapped[Practitioner] = relationship(back_populates="appointments")
-    availability: Mapped[Availability] = relationship(back_populates="appointment")
+class Appointment(Document):
+    collection = "appointments"
+    user_id: DocumentId
+    practitioner_id: DocumentId
+    availability_id: DocumentId
+    appointment_type: AppointmentType
+    status: AppointmentStatus = AppointmentStatus.confirmed
+    scheduled_at: datetime
+    reason: str
+    notes: str | None = None
+    practitioner: Practitioner | None = Field(default=None, exclude=True)

@@ -13,9 +13,9 @@ const services=[
 ];
 export default async function Home(){
  const token=(await cookies()).get("fuuud_session")?.value;
- let firstName="there",signedIn=false;
+ let firstName="user",signedIn=false;
  let appointments:ApiAppointment[]|null=null;
- if(token){const [user,care]=await Promise.allSettled([getCurrentUser(token),getMyAppointments(token,"upcoming")]);if(user.status==="fulfilled"){firstName=user.value.first_name;signedIn=true}if(care.status==="fulfilled")appointments=care.value}
+ if(token){const [user,care]=await Promise.allSettled([getCurrentUser(token),getMyAppointments(token,"upcoming")]);if(user.status==="fulfilled"){firstName=user.value.first_name.trim()||"user";signedIn=true}if(care.status==="fulfilled")appointments=care.value}
  const next=appointments?.slice().sort((a,b)=>Date.parse(a.scheduled_at)-Date.parse(b.scheduled_at))[0];
  const showAppointments=!!next||(signedIn&&appointments===null);
  return <div className="page home-page">

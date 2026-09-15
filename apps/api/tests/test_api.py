@@ -92,9 +92,10 @@ def test_password_reset_is_private_single_use_and_changes_password(client):
     new_token = client.post(
         "/api/v1/auth/login", json={"email": account["email"], "password": "newPassword123"}
     ).json()["access_token"]
-    assert client.get(
-        "/api/v1/users/me", headers={"Authorization": f"Bearer {new_token}"}
-    ).status_code == 200
+    assert (
+        client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {new_token}"}).status_code
+        == 200
+    )
 
 
 def test_email_verification_is_private_and_single_use(client):

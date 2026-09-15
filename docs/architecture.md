@@ -1,3 +1,5 @@
+> Database update: the backend now uses MongoDB. SQL/Alembic details below are historical. Use [MongoDB deployment](mongodb-deployment.md) for current setup and commands.
+
 # FUUUD architecture
 
 ```text

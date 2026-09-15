@@ -1,10 +1,9 @@
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.orm import Session
 
 from app.core.security import decode_token
-from app.db import get_db
+from app.db import Store, get_db
 from app.models import AccountStatus, User, UserRole
 
 bearer = HTTPBearer(auto_error=False)
@@ -12,7 +11,7 @@ bearer = HTTPBearer(auto_error=False)
 
 def current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-    db: Session = Depends(get_db),
+    db: Store = Depends(get_db),
 ) -> User:
     if not credentials:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")

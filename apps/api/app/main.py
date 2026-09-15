@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo.errors import PyMongoError
 
 from app.api import router
 from app.core.config import get_settings
+from app.db import get_client
 
 settings = get_settings()
 settings.validate_security()
@@ -22,3 +24,12 @@ def health():
 
 
 app.include_router(router)
+
+
+@app.get("/ready")
+def ready():
+    try:
+        get_client().admin.command("ping")
+    except PyMongoError:
+        raise HTTPException(503, "Database is unavailable") from None
+    return {"status": "ok"}

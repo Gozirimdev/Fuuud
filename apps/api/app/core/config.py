@@ -7,7 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://fuuud:fuuud@localhost:5432/fuuud"
+    mongodb_uri: SecretStr = SecretStr("mongodb://localhost:27017/?replicaSet=rs0")
+    mongodb_database: str = Field(default="fuuud", pattern=r"^[A-Za-z0-9_-]+$")
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
@@ -37,9 +38,15 @@ class Settings(BaseSettings):
         if bool(self.smtp_username) != bool(self.smtp_password.get_secret_value()):
             raise RuntimeError("Set both SMTP_USERNAME and SMTP_PASSWORD.")
         url = urlsplit(self.public_app_url)
-        if (url.scheme not in {"http", "https"} or not url.hostname
-                or url.username or url.password or url.query or url.fragment
-                or url.path not in {"", "/"}):
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username
+            or url.password
+            or url.query
+            or url.fragment
+            or url.path not in {"", "/"}
+        ):
             raise RuntimeError("PUBLIC_APP_URL must be the application's public origin.")
         if self.environment.lower() != "development" and url.scheme != "https":
             raise RuntimeError("PUBLIC_APP_URL must use HTTPS outside development.")
