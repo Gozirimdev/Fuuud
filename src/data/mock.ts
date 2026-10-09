@@ -1,8 +1,12 @@
-import {Doctor,Hospital,Prescription} from "@/types";
+import {Doctor,Hospital,Prescription,Pharmacy} from "@/types";
 export const doctors:Doctor[]=[
 {id:"adaeze-okafor",name:"Dr. Adaeze Okafor",initials:"AO",specialty:"Dermatology",title:"Consultant Dermatologist",location:"Awka, Anambra",experience:9,rating:4.9,fee:18000,next:"Today, 3:30 PM",verified:true,bio:"Provides thoughtful, evidence-led care for common skin, hair and nail concerns."},
 {id:"tunde-balogun",name:"Dr. Tunde Balogun",initials:"TB",specialty:"General Physician",title:"Family Medicine Physician",location:"Awka, Anambra",experience:12,rating:4.8,fee:12000,next:"Tomorrow, 9:00 AM",verified:true,bio:"Focused on accessible primary care and long-term wellbeing for adults and families."},
 {id:"amara-eze",name:"Dr. Amara Eze",initials:"AE",specialty:"Pediatrics",title:"Consultant Paediatrician",location:"Nnewi, Anambra",experience:8,rating:4.7,fee:15000,next:"Tomorrow, 1:00 PM",verified:true,bio:"Family-centred paediatric care with clear communication for parents and guardians."}];
+export const pharmacies:Pharmacy[]=[
+{id:"greencross",name:"GreenCross Pharmacy",location:"Awka",distance:"1.8 km",open:true,verified:true},
+{id:"carepoint",name:"CarePoint Pharmacy",location:"Awka",distance:"3.2 km",open:true,verified:true},
+{id:"aroma",name:"Aroma Community Pharmacy",location:"Awka",distance:"4.6 km",open:false,verified:false}];
 export const hospitals:Hospital[]=[
 {id:"unity-medical",name:"Unity Medical Centre",location:"Zik Avenue, Awka",distance:"2.4 km",eta:"8 min",type:"Private hospital",verified:true,emergency:true,open:true,services:["Emergency Unit","Laboratory","Pharmacy","Ambulance"]},
 {id:"anambra-care",name:"Anambra Specialist Care",location:"Aroma Junction, Awka",distance:"4.1 km",eta:"14 min",type:"Specialist hospital",verified:true,emergency:true,open:true,services:["ICU","Blood Bank","Cardiology","Emergency Unit"]},
